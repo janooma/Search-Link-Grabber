@@ -166,6 +166,8 @@ async function computeTotalEstimated() {
 async function start(payload) {
   if (memoryState && memoryState.running) return false;
 
+  // Start always begins a fresh run for the supplied config but **retains**
+  // previously captured results. Use Clear explicitly if you want to wipe data.
   memoryState = {
     ...DEFAULT_STATE,
     ...payload,
@@ -173,14 +175,13 @@ async function start(payload) {
     paused: false,
     currentComboIndex: 0,
     currentPage: 0,
-    currentTabId: null,
+    currentTabId: memoryState?.currentTabId || null,
     startedAt: Date.now(),
     completedAt: null,
     status: 'Starting...',
   };
   await computeTotalEstimated();
   await saveState();
-  if (payload.clearPrevious) await setResults([]);
 
   runLoop();
   return true;
@@ -226,16 +227,17 @@ async function runLoop() {
 
     while (memoryState.running && memoryState.currentPage < memoryState.maxPages) {
       const url = buildSearchUrl(memoryState.engine, query, memoryState.currentPage);
-      await updateStatus(`Scraping ${memoryState.engine} | combo ${memoryState.currentComboIndex + 1}/${effectiveCombos.length} | page ${memoryState.currentPage + 1}/${memoryState.maxPages}`);
+      const comboLabel = `${memoryState.currentComboIndex + 1}/${effectiveCombos.length}`;
+      const pageLabel = `${memoryState.currentPage + 1}/${memoryState.maxPages}`;
 
       try {
-        await navigateAndScrape(url);
+        await updateStatus(`Scraping ${memoryState.engine} | combo ${comboLabel} | page ${pageLabel}`);
+        await navigateAndScrape(url, query);
       } catch (e) {
-        memoryState.status = 'Error: ' + e.message;
-        memoryState.running = false;
-        memoryState.paused = true;
-        await saveState();
-        return;
+        // Never stop because of CAPTCHA or transient page errors. Keep trying
+        // until the user clicks Stop or all combos/pages are exhausted.
+        console.warn(`[SLG] Error on combo ${comboLabel} page ${pageLabel}: ${e.message}`);
+        await updateStatus(`Blocked/Captcha on ${memoryState.engine} combo ${comboLabel} page ${pageLabel} — continuing...`);
       }
 
       memoryState.currentPage += 1;
@@ -251,38 +253,41 @@ async function runLoop() {
     await saveState();
   }
 
-  memoryState.running = false;
-  memoryState.paused = false;
-  memoryState.completedAt = Date.now();
-  memoryState.status = memoryState.completedAt ? 'Finished' : 'Ready';
-  await saveState();
+  if (memoryState.running) {
+    memoryState.running = false;
+    memoryState.paused = false;
+    memoryState.completedAt = Date.now();
+    memoryState.status = 'Finished';
+    await saveState();
+  }
 }
 
-async function navigateAndScrape(url) {
+async function navigateAndScrape(url, query) {
   // Create or reuse a single tab/window for scraping.
-  let tabId;
-  if (memoryState.currentTabId) {
+  let tabId = memoryState.currentTabId;
+  if (tabId) {
     try {
-      await chrome.tabs.get(memoryState.currentTabId);
-      await chrome.tabs.update(memoryState.currentTabId, { url, active: false });
-      tabId = memoryState.currentTabId;
+      await chrome.tabs.get(tabId);
     } catch (e) {
+      tabId = null;
       memoryState.currentTabId = null;
     }
   }
 
-  if (!memoryState.currentTabId) {
+  if (!tabId) {
     const tab = await chrome.tabs.create({ url, active: false });
     tabId = tab.id;
     memoryState.currentTabId = tabId;
     await saveState();
+  } else {
+    await chrome.tabs.update(tabId, { url, active: false });
   }
 
-  // Wait for page load + some buffer for scripts to render results.
-  await waitForTabLoad(tabId);
-  await sleep(1500);
+  // Wait for page load. Cap at ~25s so a stuck CAPTCHA page doesn't hang forever.
+  await waitForTabLoad(tabId, 25000);
+  await sleep(2000);
 
-  // Inject content script if not present.
+  // Try to inject content script. Some engine pages block this; still continue.
   try {
     await chrome.scripting.executeScript({
       target: { tabId },
@@ -290,17 +295,26 @@ async function navigateAndScrape(url) {
     });
     await sleep(500);
   } catch (e) {
-    // already injected or unsupported
+    console.warn('[SLG] Content script injection skipped:', e.message);
   }
 
-  const response = await sendToTab(tabId, { action: 'scrapeLinks', engine: memoryState.engine });
-  if (!response || !response.links) return;
+  let response;
+  try {
+    response = await sendToTab(tabId, { action: 'scrapeLinks', engine: memoryState.engine });
+  } catch (e) {
+    // Tab may be on a verification/CAPTCHA page. Do not stop; just record 0 links.
+    console.warn('[SLG] Scrape message failed:', e.message);
+    response = { links: [] };
+  }
 
+  // Log page-level metadata even when zero links are found.
   const existing = await getResults();
   const seen = new Set(memoryState.removeDuplicates ? existing.map((r) => normalizeUrl(r.url)) : []);
   const newRecords = [];
+  const pageNo = memoryState.currentPage + 1;
+  const comboTerm = memoryState.combos[memoryState.currentComboIndex] || '';
 
-  for (const item of response.links) {
+  for (const item of response.links || []) {
     const norm = normalizeUrl(item.url);
     if (memoryState.removeDuplicates && seen.has(norm)) continue;
     seen.add(norm);
@@ -308,8 +322,9 @@ async function navigateAndScrape(url) {
       url: item.url,
       title: item.title || '',
       engine: memoryState.engine,
-      query: (memoryState.baseQuery + ' ' + (memoryState.combos[memoryState.currentComboIndex] || '')).trim(),
-      page: memoryState.currentPage + 1,
+      query: query,
+      combo: comboTerm,
+      page: pageNo,
       capturedAt: new Date().toISOString(),
     });
   }
@@ -317,20 +332,26 @@ async function navigateAndScrape(url) {
   await setResults(existing.concat(newRecords));
 }
 
-function waitForTabLoad(tabId) {
+function waitForTabLoad(tabId, maxWaitMs = 25000) {
   return new Promise((resolve) => {
+    let resolved = false;
     const listener = (updatedTabId, info) => {
+      if (resolved) return;
       if (updatedTabId === tabId && info.status === 'complete') {
+        resolved = true;
         chrome.tabs.onUpdated.removeListener(listener);
         resolve();
       }
     };
     chrome.tabs.onUpdated.addListener(listener);
-    // Failsafe
     setTimeout(() => {
-      chrome.tabs.onUpdated.removeListener(listener);
-      resolve();
-    }, 20000);
+      if (!resolved) {
+        resolved = true;
+        chrome.tabs.onUpdated.removeListener(listener);
+        console.warn('[SLG] Tab load timeout; continuing anyway.');
+        resolve();
+      }
+    }, maxWaitMs);
   });
 }
 

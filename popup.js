@@ -92,7 +92,7 @@ els.btnStart.addEventListener('click', async () => {
     els.statusText.textContent = 'Please enter a base query.';
     return;
   }
-  cfg.clearPrevious = true;
+  // Start always preserves existing captured links. Use Clear to wipe them.
   const { ok } = await send('start', cfg);
   if (ok) {
     els.statusText.textContent = 'Started...';
@@ -134,7 +134,7 @@ function escapeCsvCell(val) {
 }
 
 function buildCsv(rows) {
-  const headers = ['url', 'title', 'engine', 'query', 'page', 'capturedAt'];
+  const headers = ['url', 'title', 'engine', 'query', 'combo', 'page', 'capturedAt'];
   const lines = [headers.join(',')];
   for (const r of rows) {
     lines.push(headers.map((h) => escapeCsvCell(r[h])).join(','));

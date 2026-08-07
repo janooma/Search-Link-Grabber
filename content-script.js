@@ -96,9 +96,14 @@
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'scrapeLinks') {
-      const engine = message.engine || 'google';
-      const links = scrapeLinks(engine);
-      sendResponse({ links, engine, count: links.length });
+      try {
+        const engine = message.engine || 'google';
+        const links = scrapeLinks(engine);
+        sendResponse({ links, engine, count: links.length });
+      } catch (e) {
+        // Return empty on verification/CAPTCHA pages so the background loop keeps going.
+        sendResponse({ links: [], engine: message.engine, count: 0, error: e.message });
+      }
     }
   });
 
