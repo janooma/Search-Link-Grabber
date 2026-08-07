@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Search Link Grabber</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="app">
+    <header>
+      <img src="icons/icon48.png" alt="logo" class="logo" />
+      <h1>Search Link Grabber</h1>
+    </header>
+
+    <section class="config">
+      <label for="engine">Search Engine</label>
+      <select id="engine">
+        <option value="google">Google</option>
+        <option value="bing">Bing</option>
+        <option value="yahoo">Yahoo</option>
+        <option value="duckduckgo">DuckDuckGo</option>
+        <option value="brave">Brave</option>
+      </select>
+
+      <label for="baseQuery">Base Query</label>
+      <textarea id="baseQuery" rows="3" placeholder="e.g. site:https://www.volza.com/company-profile Bangladesh p"></textarea>
+
+      <label for="comboList">Combo Append List <small>(comma separated)</small></label>
+      <textarea id="comboList" rows="3" placeholder="e.g. garment, textile, rice, jute, leather"></textarea>
+
+      <div class="row">
+        <div>
+          <label for="maxPages">Max Pages</label>
+          <input type="number" id="maxPages" min="1" max="100" value="30" />
+        </div>
+        <div>
+          <label for="delayMs">Delay (ms)</label>
+          <input type="number" id="delayMs" min="500" max="30000" step="500" value="2000" />
+        </div>
+      </div>
+
+      <label>
+        <input type="checkbox" id="removeDuplicates" checked />
+        Remove duplicate URLs across all pages
+      </label>
+    </section>
+
+    <section class="actions">
+      <button id="btnStart" class="primary">Start</button>
+      <button id="btnStop" disabled>Stop</button>
+      <button id="btnResume" disabled>Resume</button>
+      <button id="btnClear" class="danger">Clear</button>
+    </section>
+
+    <section class="status">
+      <p id="statusText">Ready</p>
+      <div class="progress-row">
+        <progress id="progressBar" value="0" max="100"></progress>
+        <span id="progressText">0 / 0</span>
+      </div>
+      <p>Links captured: <strong id="linkCount">0</strong></p>
+    </section>
+
+    <section class="downloads">
+      <button id="btnCsv" class="download">Download CSV</button>
+      <button id="btnJson" class="download">Download JSON</button>
+      <button id="btnXls" class="download">Download XLS</button>
+    </section>
+
+    <footer>
+      <small>Scraping continues even if this popup is closed.</small>
+    </footer>
+  </div>
+
+  <script src="xlsx-writer.js"></script>
+  <script src="xlsx-shim.js"></script>
+  <script src="popup.js"></script>
+</body>
+</html>

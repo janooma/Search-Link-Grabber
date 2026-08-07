@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "Search Link Grabber",
+  "version": "1.0.0",
+  "description": "Scrape search result links across multiple engines, combos and pages. Resume even after popup closes.",
+  "permissions": [
+    "activeTab",
+    "tabs",
+    "storage",
+    "scripting",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "https://www.google.com/*",
+    "https://www.google.co.*/*",
+    "https://www.bing.com/*",
+    "https://search.yahoo.com/*",
+    "https://duckduckgo.com/*",
+    "https://html.duckduckgo.com/*",
+    "https://search.brave.com/*"
+  ],
+  "background": {
+    "service_worker": "background.js"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://www.google.com/search*",
+        "https://www.google.co.*/search*",
+        "https://www.bing.com/search*",
+        "https://search.yahoo.com/search*",
+        "https://duckduckgo.com/*",
+        "https://html.duckduckgo.com/html/*",
+        "https://search.brave.com/search*"
+      ],
+      "js": ["content-script.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}
