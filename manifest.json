@@ -12,7 +12,6 @@
   ],
   "host_permissions": [
     "https://www.google.com/*",
-    "https://www.google.co.*/*",
     "https://www.bing.com/*",
     "https://search.yahoo.com/*",
     "https://duckduckgo.com/*",
@@ -39,7 +38,6 @@
     {
       "matches": [
         "https://www.google.com/search*",
-        "https://www.google.co.*/search*",
         "https://www.bing.com/search*",
         "https://search.yahoo.com/search*",
         "https://duckduckgo.com/*",
