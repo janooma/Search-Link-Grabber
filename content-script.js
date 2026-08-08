@@ -121,14 +121,19 @@
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'scrapeLinks') {
       try {
+        const engine = message.engine || 'google';
+        // Even if CAPTCHA-like text exists, a page with real listing URLs is a
+        // normal results page, not a challenge. So scrape first.
+        const links = scrapeLinks(engine);
+        if (links.length > 0) {
+          return sendResponse({ links, engine, captcha: false, count: links.length });
+        }
         if (detectCaptcha()) {
           return sendResponse({ links: [], captcha: true, count: 0 });
         }
-        const engine = message.engine || 'google';
-        const links = scrapeLinks(engine);
-        sendResponse({ links, engine, count: links.length });
+        sendResponse({ links, engine, captcha: false, count: links.length });
       } catch (e) {
-        sendResponse({ links: [], engine: message.engine, count: 0, error: e.message });
+        sendResponse({ links: [], engine: message.engine, captcha: false, count: 0, error: e.message });
       }
     }
   });
