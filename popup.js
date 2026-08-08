@@ -2,6 +2,8 @@
 
 const qs = (sel) => document.querySelector(sel);
 
+const POPUP_FORM_KEY = 'slg_popup_form';
+
 const els = {
   engine: qs('#engine'),
   baseQuery: qs('#baseQuery'),
@@ -48,24 +50,56 @@ function readConfig() {
   };
 }
 
+function getFormValues() {
+  return {
+    engine: els.engine.value,
+    baseQuery: els.baseQuery.value,
+    comboList: els.comboList.value,
+    maxPages: els.maxPages.value,
+    delayMs: els.delayMs.value,
+    removeDuplicates: els.removeDuplicates.checked,
+  };
+}
+
+function setFormValues(values) {
+  if (!values) return;
+  if (values.engine !== undefined) els.engine.value = values.engine;
+  if (values.baseQuery !== undefined) els.baseQuery.value = values.baseQuery;
+  if (values.comboList !== undefined) els.comboList.value = values.comboList;
+  if (values.maxPages !== undefined) els.maxPages.value = values.maxPages;
+  if (values.delayMs !== undefined) els.delayMs.value = values.delayMs;
+  if (values.removeDuplicates !== undefined) els.removeDuplicates.checked = values.removeDuplicates;
+}
+
+function saveDraft() {
+  const draft = getFormValues();
+  chrome.storage.local.set({ [POPUP_FORM_KEY]: draft }).catch(() => {});
+}
+
+async function loadDraft() {
+  try {
+    const data = await chrome.storage.local.get(POPUP_FORM_KEY);
+    return data[POPUP_FORM_KEY] || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+async function clearDraft() {
+  try {
+    await chrome.storage.local.remove(POPUP_FORM_KEY);
+  } catch (e) {
+    // ignore
+  }
+}
+
 async function updateUI() {
   const { state } = await send('getState');
   currentResults = (await send('getResults')).results || [];
 
   if (state) {
-    els.engine.value = state.engine || 'google';
-    if (state.baseQuery !== undefined && !els.baseQuery.value) {
-      els.baseQuery.value = state.baseQuery;
-    }
-    if (state.combos && state.combos.length && !els.comboList.value) {
-      els.comboList.value = state.combos.join(', ');
-    }
-    els.maxPages.value = state.maxPages || 30;
-    els.delayMs.value = state.delayMs || 2000;
-    els.removeDuplicates.checked = state.removeDuplicates !== false;
-
     els.statusText.textContent = state.status || (state.running ? 'Running...' : 'Ready');
-    const combosLen = Math.max(1, (state.combos || []).length);
+    const combosLen = Math.max(1, (state.combos || []).length + 1);
     const total = Math.max(1, combosLen * (state.maxPages || 30));
     const done = (state.currentComboIndex || 0) * (state.maxPages || 30) + (state.currentPage || 0);
     els.progressBar.value = Math.min(total, done);
@@ -84,7 +118,24 @@ function updateButtons(state) {
   els.btnStart.disabled = running;
   els.btnStop.disabled = !running;
   els.btnResume.disabled = running || !paused;
+  els.btnCsv.disabled = !currentResults.length;
+  els.btnJson.disabled = !currentResults.length;
+  els.btnXls.disabled = !currentResults.length;
 }
+
+// Auto-save form values as the user types so they survive popup close.
+[
+  els.engine,
+  els.baseQuery,
+  els.comboList,
+  els.maxPages,
+  els.delayMs,
+  els.removeDuplicates,
+].forEach((el) => {
+  if (!el) return;
+  el.addEventListener('input', saveDraft);
+  el.addEventListener('change', saveDraft);
+});
 
 els.btnStart.addEventListener('click', async () => {
   const cfg = readConfig();
@@ -92,7 +143,7 @@ els.btnStart.addEventListener('click', async () => {
     els.statusText.textContent = 'Please enter a base query.';
     return;
   }
-  // Start always preserves existing captured links. Use Clear to wipe them.
+  saveDraft();
   const { ok } = await send('start', cfg);
   if (ok) {
     els.statusText.textContent = 'Started...';
@@ -112,6 +163,7 @@ els.btnResume.addEventListener('click', async () => {
     els.statusText.textContent = 'Please enter a base query.';
     return;
   }
+  saveDraft();
   const { ok } = await send('resume', cfg);
   if (ok) {
     startPolling();
@@ -122,9 +174,15 @@ els.btnResume.addEventListener('click', async () => {
 els.btnClear.addEventListener('click', async () => {
   if (!confirm('Clear all captured links and reset state?')) return;
   await send('clear');
+  await clearDraft();
   currentResults = [];
   els.baseQuery.value = '';
   els.comboList.value = '';
+  els.engine.value = 'google';
+  els.maxPages.value = '30';
+  els.delayMs.value = '2000';
+  els.removeDuplicates.checked = true;
+  saveDraft();
   updateUI();
 });
 
@@ -184,7 +242,9 @@ function download(format) {
   const a = document.createElement('a');
   a.href = url;
   a.download = filename;
+  document.body.appendChild(a);
   a.click();
+  a.remove();
   URL.revokeObjectURL(url);
 }
 
@@ -202,15 +262,29 @@ function startPolling() {
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
+  // 1. Restore the last draft the user was editing. If there is no draft,
+  //    fallback to the last run configuration so first-time users see something.
+  const draft = await loadDraft();
+  if (draft) {
+    setFormValues(draft);
+  } else {
+    const { state } = await send('getState');
+    if (state) {
+      setFormValues({
+        engine: state.engine || 'google',
+        baseQuery: state.baseQuery || '',
+        comboList: (state.combos || []).join(', '),
+        maxPages: String(state.maxPages || 30),
+        delayMs: String(state.delayMs || 2000),
+        removeDuplicates: state.removeDuplicates !== false,
+      });
+      saveDraft();
+    }
+  }
+
+  // 2. Load status / results / buttons.
   await updateUI();
 
-  // Restore persisted form values from memory state once.
   const { state } = await send('getState');
-  if (state) {
-    if (state.baseQuery && !els.baseQuery.value) els.baseQuery.value = state.baseQuery;
-    if (state.combos && state.combos.length && !els.comboList.value) {
-      els.comboList.value = state.combos.join(', ');
-    }
-    if (state.running) startPolling();
-  }
+  if (state && state.running) startPolling();
 });
