@@ -118,6 +118,45 @@
     return phrases.some((p) => text.includes(p));
   }
 
+  const NEXT_PAGE_SELECTORS = {
+    google: 'a#pnnext, a[aria-label="Next page"], #xjs a:has(> svg), .DwpMZe',
+    bing: 'a.sb_pagN, a[title="Next page"]',
+    yahoo: 'a.next, .pagination a.next',
+    duckduckgo: 'input[name="next"], .nav-link form input[type="submit"], a:has-text(Next)',
+    brave: 'a[aria-label="Next page"], a.next, .pagination-next',
+  };
+
+  async function scrollToBottom() {
+    return new Promise((resolve) => {
+      const step = Math.max(window.innerHeight * 0.75, 400);
+      let lastY = -1;
+      let scrolls = 0;
+      const timer = setInterval(() => {
+        const y = window.scrollY;
+        window.scrollBy(0, step);
+        scrolls++;
+        const atBottom = (window.innerHeight + window.scrollY) >= (document.body.scrollHeight - 50);
+        if (atBottom || window.scrollY === lastY || scrolls > 40) {
+          clearInterval(timer);
+          resolve();
+        }
+        lastY = y;
+      }, 120);
+      // Failsafe
+      setTimeout(() => { clearInterval(timer); resolve(); }, 6000);
+    });
+  }
+
+  function clickNextPage(engine) {
+    const selector = NEXT_PAGE_SELECTORS[engine];
+    if (!selector) return false;
+    const el = document.querySelector(selector);
+    if (!el) return false;
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.click();
+    return true;
+  }
+
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (message.action === 'scrapeLinks') {
       try {
@@ -135,6 +174,16 @@
       } catch (e) {
         sendResponse({ links: [], engine: message.engine, captcha: false, count: 0, error: e.message });
       }
+    }
+
+    if (message.action === 'goToNextPage') {
+      (async () => {
+        const engine = message.engine || 'google';
+        await scrollToBottom();
+        const ok = clickNextPage(engine);
+        sendResponse({ ok });
+      })();
+      return true;
     }
   });
 

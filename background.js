@@ -302,18 +302,28 @@ async function navigateAndScrape(url, query) {
     }
   }
 
+  const isFirstPage = memoryState.currentPage === 0;
+
   if (!tabId) {
     const tab = await chrome.tabs.create({ url, active: false });
     tabId = tab.id;
     memoryState.currentTabId = tabId;
     await saveState();
-  } else {
+  } else if (isFirstPage) {
+    // First page of each combo: load directly via URL.
     await chrome.tabs.update(tabId, { url, active: false });
+  } else {
+    // Subsequent pages: behave like a human — scroll to the bottom and click
+    // the "Next" pagination link. Fallback to URL navigation if unavailable.
+    const clicked = await clickNextPageInTab(tabId, memoryState.engine);
+    if (!clicked) {
+      await chrome.tabs.update(tabId, { url, active: false });
+    }
   }
 
   // Wait for page load. Cap at ~25s so a stuck CAPTCHA page doesn't hang forever.
   await waitForTabLoad(tabId, 25000);
-  await sleep(2000);
+  await sleep(2500);
 
   // Try to inject content script. Some engine pages block this; still continue.
   try {
@@ -378,6 +388,22 @@ async function navigateAndScrape(url, query) {
   }
 
   await setResults(existing.concat(newRecords));
+}
+
+async function clickNextPageInTab(tabId, engine) {
+  try {
+    // Ensure the content script is available before asking it to click.
+    await chrome.scripting.executeScript({
+      target: { tabId },
+      files: ['content-script.js'],
+    });
+    await sleep(600);
+    const result = await chrome.tabs.sendMessage(tabId, { action: 'goToNextPage', engine });
+    return !!(result && result.ok);
+  } catch (e) {
+    console.warn('[SLG] goToNextPage failed:', e.message);
+    return false;
+  }
 }
 
 async function tabLooksLikeCaptcha(tabId) {
