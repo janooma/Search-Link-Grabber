@@ -159,8 +159,9 @@ async function updateStatus(status) {
 }
 
 async function computeTotalEstimated() {
-  const combos = memoryState.combos.length || 1;
-  memoryState.totalEstimated = combos * memoryState.maxPages;
+  // Base query run + one run per combo term.
+  const comboRuns = Math.max(1, memoryState.combos.length + 1);
+  memoryState.totalEstimated = comboRuns * memoryState.maxPages;
 }
 
 async function start(payload) {
@@ -219,7 +220,8 @@ async function clearData() {
 
 async function runLoop() {
   const { combos, baseQuery } = memoryState;
-  const effectiveCombos = combos.length ? combos : [''];
+  // Always run the base query first, then run the base query + each combo term.
+  const effectiveCombos = combos.length ? ['', ...combos] : [''];
 
   while (memoryState.running && memoryState.currentComboIndex < effectiveCombos.length) {
     const combo = effectiveCombos[memoryState.currentComboIndex];
