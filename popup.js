@@ -107,7 +107,12 @@ els.btnStop.addEventListener('click', async () => {
 });
 
 els.btnResume.addEventListener('click', async () => {
-  const { ok } = await send('resume');
+  const cfg = readConfig();
+  if (!cfg.baseQuery) {
+    els.statusText.textContent = 'Please enter a base query.';
+    return;
+  }
+  const { ok } = await send('resume', cfg);
   if (ok) {
     startPolling();
   }

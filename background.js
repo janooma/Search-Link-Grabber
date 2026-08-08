@@ -160,9 +160,11 @@ async function updateStatus(status) {
 
 function configsEqual(a, b) {
   if (!a || !b) return false;
+  // Engine, base query and combo list define the search identity.
+  // Max pages and delay are runtime settings that can be changed without
+  // losing progress.
   if (a.engine !== b.engine) return false;
   if (a.baseQuery !== b.baseQuery) return false;
-  if ((a.maxPages || 0) !== (b.maxPages || 0)) return false;
   const aCombos = a.combos || [];
   const bCombos = b.combos || [];
   if (aCombos.length !== bCombos.length) return false;
@@ -182,12 +184,17 @@ async function start(payload) {
   if (memoryState && memoryState.running) return false;
 
   // If configuration hasn't changed, Start continues from where it was stopped
-  // (same as Resume). If Clear was used or config changed, it starts fresh.
+  // (same as Resume). Runtime settings (maxPages, delayMs) are updated from
+  // the popup so the user can change them after stopping without losing progress.
   if (memoryState && configsEqual(memoryState, payload)) {
     memoryState.running = true;
     memoryState.paused = false;
     memoryState.status = 'Resuming from last stop...';
     memoryState.completedAt = null;
+    memoryState.maxPages = payload.maxPages;
+    memoryState.delayMs = payload.delayMs;
+    memoryState.removeDuplicates = payload.removeDuplicates;
+    await computeTotalEstimated();
     await saveState();
     runLoop();
     return true;
@@ -225,13 +232,21 @@ async function stop() {
   await saveState();
 }
 
-async function resume() {
+async function resume(payload) {
   if (!memoryState) return false;
   if (memoryState.running) return false;
+
+  // Update runtime settings sent from the popup without resetting position.
+  if (payload) {
+    memoryState.maxPages = payload.maxPages;
+    memoryState.delayMs = payload.delayMs;
+    memoryState.removeDuplicates = payload.removeDuplicates;
+  }
   memoryState.running = true;
   memoryState.paused = false;
   memoryState.status = 'Resuming from last stop...';
   memoryState.completedAt = null;
+  await computeTotalEstimated();
   await saveState();
   runLoop();
   return true;
@@ -457,7 +472,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true });
         break;
       case 'resume':
-        sendResponse({ ok: await resume() });
+        sendResponse({ ok: await resume(message.payload) });
         break;
       case 'clear':
         await clearData();
