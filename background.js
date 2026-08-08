@@ -300,14 +300,28 @@ async function navigateAndScrape(url, query) {
     console.warn('[SLG] Content script injection skipped:', e.message);
   }
 
+  // Repeatedly ask the page for links. If the page reports CAPTCHA, wait and
+  // retry so the user has time to solve it. Only proceed once CAPTCHA is gone.
   let response;
-  try {
-    response = await sendToTab(tabId, { action: 'scrapeLinks', engine: memoryState.engine });
-  } catch (e) {
-    // Tab may be on a verification/CAPTCHA page. Do not stop; just record 0 links.
-    console.warn('[SLG] Scrape message failed:', e.message);
-    response = { links: [] };
+  let attempts = 0;
+  while (memoryState.running) {
+    try {
+      response = await sendToTab(tabId, { action: 'scrapeLinks', engine: memoryState.engine });
+    } catch (e) {
+      response = { links: [], captcha: true };
+    }
+
+    if (!response || response.captcha) {
+      attempts += 1;
+      const pageNo = memoryState.currentPage + 1;
+      await updateStatus(`CAPTCHA detected on page ${pageNo} — solve it to continue. Waiting... (${attempts})`);
+      await sleep(3000);
+      continue;
+    }
+    break;
   }
+
+  if (!memoryState.running) return;
 
   // Log page-level metadata even when zero links are found.
   const existing = await getResults();
