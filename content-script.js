@@ -44,7 +44,23 @@
     }
   }
 
+  function hasNoResults() {
+    if (!document.body) return false;
+    const text = document.body.innerText.toLowerCase();
+    const phrases = [
+      'did not match any documents',
+      'did not match any',
+      'no results found',
+      'your search did not match',
+      'we did not find',
+      'no results',
+    ];
+    return phrases.some((p) => text.includes(p));
+  }
+
   function scrapeLinks(engine) {
+    if (hasNoResults()) return [];
+
     const cfg = ENGINE_SELECTORS[engine] || ENGINE_SELECTORS.google;
     const containers = Array.from(document.querySelectorAll(cfg.containers));
     const links = [];
@@ -66,8 +82,10 @@
       });
     }
 
-    // Fallback if no containers matched: grab the first external link in each logical block.
-    if (!links.length) {
+    // For known engines, trust the selectors. Fall back to generic external
+    // links only when the engine is unknown, to avoid capturing footer/help
+    // links on no-results pages.
+    if (!links.length && !ENGINE_SELECTORS[engine]) {
       const anchors = Array.from(document.querySelectorAll('a[href^="http"], a[href^="/url"], a[href^="/l?"], a[href^="/r?"]'));
       anchors.forEach((a, idx) => {
         const href = a.href;
