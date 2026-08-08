@@ -158,20 +158,29 @@ async function updateStatus(status) {
   await saveState();
 }
 
-function configsEqual(a, b) {
+function searchIdentityEqual(a, b) {
   if (!a || !b) return false;
-  // Engine, base query and combo list define the search identity.
-  // Max pages and delay are runtime settings that can be changed without
-  // losing progress.
-  if (a.engine !== b.engine) return false;
-  if (a.baseQuery !== b.baseQuery) return false;
-  const aCombos = a.combos || [];
-  const bCombos = b.combos || [];
-  if (aCombos.length !== bCombos.length) return false;
-  for (let i = 0; i < aCombos.length; i++) {
-    if (aCombos[i] !== bCombos[i]) return false;
+  // Only engine and base query define the search identity. Combo list, max
+  // pages and delay are runtime settings that can be edited after stopping
+  // and will be respected on resume.
+  return a.engine === b.engine && a.baseQuery === b.baseQuery;
+}
+
+function mapPositionToNewCombos(savedState, newCombos) {
+  // Try to resume at the combo value we were processing. This allows users
+  // to stop, add/remove combos, and resume without restarting from scratch.
+  const savedEff = ['', ...(savedState.combos || [])];
+  const newEff = ['', ...(newCombos || [])];
+  const savedIdx = savedState.currentComboIndex || 0;
+  const savedPage = savedState.currentPage || 0;
+  const lastValue = savedEff[savedIdx] !== undefined ? savedEff[savedIdx] : '';
+  const idxInNew = newEff.findIndex((c) => c === lastValue);
+  if (idxInNew >= 0) {
+    return { currentComboIndex: idxInNew, currentPage: savedPage };
   }
-  return true;
+  // Fallback: keep the same index clamped to the new list length.
+  const fallbackIdx = Math.min(savedIdx, Math.max(0, newEff.length - 1));
+  return { currentComboIndex: fallbackIdx, currentPage: savedPage };
 }
 
 async function computeTotalEstimated() {
@@ -183,17 +192,20 @@ async function computeTotalEstimated() {
 async function start(payload) {
   if (memoryState && memoryState.running) return false;
 
-  // If configuration hasn't changed, Start continues from where it was stopped
-  // (same as Resume). Runtime settings (maxPages, delayMs) are updated from
-  // the popup so the user can change them after stopping without losing progress.
-  if (memoryState && configsEqual(memoryState, payload)) {
+  // If the search identity (engine + base query) hasn't changed, Start behaves
+  // like Resume so users can stop, edit combos/maxPages, and continue.
+  if (memoryState && searchIdentityEqual(memoryState, payload)) {
+    const { currentComboIndex, currentPage } = mapPositionToNewCombos(memoryState, payload.combos);
+    memoryState.combos = payload.combos;
+    memoryState.maxPages = payload.maxPages;
+    memoryState.delayMs = payload.delayMs;
+    memoryState.removeDuplicates = payload.removeDuplicates;
+    memoryState.currentComboIndex = currentComboIndex;
+    memoryState.currentPage = currentPage;
     memoryState.running = true;
     memoryState.paused = false;
     memoryState.status = 'Resuming from last stop...';
     memoryState.completedAt = null;
-    memoryState.maxPages = payload.maxPages;
-    memoryState.delayMs = payload.delayMs;
-    memoryState.removeDuplicates = payload.removeDuplicates;
     await computeTotalEstimated();
     await saveState();
     runLoop();
@@ -236,11 +248,20 @@ async function resume(payload) {
   if (!memoryState) return false;
   if (memoryState.running) return false;
 
-  // Update runtime settings sent from the popup without resetting position.
+  // Update combo list and runtime settings from the popup without resetting
+  // position. If engine/base query changed, treat it as a fresh start.
+  if (payload && !searchIdentityEqual(memoryState, payload)) {
+    return start(payload);
+  }
+
   if (payload) {
+    const { currentComboIndex, currentPage } = mapPositionToNewCombos(memoryState, payload.combos);
+    memoryState.combos = payload.combos;
     memoryState.maxPages = payload.maxPages;
     memoryState.delayMs = payload.delayMs;
     memoryState.removeDuplicates = payload.removeDuplicates;
+    memoryState.currentComboIndex = currentComboIndex;
+    memoryState.currentPage = currentPage;
   }
   memoryState.running = true;
   memoryState.paused = false;
@@ -273,9 +294,10 @@ async function runLoop() {
       const comboLabel = `${memoryState.currentComboIndex + 1}/${effectiveCombos.length}`;
       const pageLabel = `${memoryState.currentPage + 1}/${memoryState.maxPages}`;
 
+      let linksFound = 0;
       try {
         await updateStatus(`Scraping ${memoryState.engine} | combo ${comboLabel} | page ${pageLabel}`);
-        await navigateAndScrape(url, query);
+        linksFound = await navigateAndScrape(url, query);
       } catch (e) {
         // Never stop because of CAPTCHA or transient page errors. Keep trying
         // until the user clicks Stop or all combos/pages are exhausted.
@@ -285,6 +307,13 @@ async function runLoop() {
 
       memoryState.currentPage += 1;
       await saveState();
+
+      // If a combo produces zero results, there is no point paging further;
+      // move on to the next combo.
+      if (linksFound === 0 && !memoryState.status?.includes('CAPTCHA')) {
+        await updateStatus(`No results for ${memoryState.engine} combo ${comboLabel} — moving to next combo.`);
+        break;
+      }
 
       if (memoryState.running && memoryState.currentPage < memoryState.maxPages) {
         await sleep(memoryState.delayMs);
@@ -403,6 +432,7 @@ async function navigateAndScrape(url, query) {
   }
 
   await setResults(existing.concat(newRecords));
+  return response.links ? response.links.length : 0;
 }
 
 async function clickNextPageInTab(tabId, engine) {
