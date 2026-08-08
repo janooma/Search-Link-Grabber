@@ -326,18 +326,24 @@ async function navigateAndScrape(url, query) {
     console.warn('[SLG] Content script injection skipped:', e.message);
   }
 
-  // Repeatedly ask the page for links. If the page reports CAPTCHA, wait and
-  // retry so the user has time to solve it. Only proceed once CAPTCHA is gone.
+  // Repeatedly ask the page for links. Only treat it as CAPTCHA when the tab
+  // URL or the content script explicitly reports one. Otherwise a transient
+  // messaging failure on a normal results page won't cause a false alarm.
   let response;
   let attempts = 0;
   while (memoryState.running) {
+    let messagingFailed = false;
     try {
       response = await sendToTab(tabId, { action: 'scrapeLinks', engine: memoryState.engine });
     } catch (e) {
-      response = { links: [], captcha: true };
+      console.warn('[SLG] Scrape message failed:', e.message);
+      response = { links: [] };
+      messagingFailed = true;
     }
 
-    if (!response || response.captcha) {
+    const likelyCaptcha = response?.captcha || (messagingFailed && await tabLooksLikeCaptcha(tabId));
+
+    if (likelyCaptcha) {
       attempts += 1;
       const pageNo = memoryState.currentPage + 1;
       await updateStatus(`CAPTCHA detected on page ${pageNo} — solve it to continue. Waiting... (${attempts})`);
@@ -372,6 +378,16 @@ async function navigateAndScrape(url, query) {
   }
 
   await setResults(existing.concat(newRecords));
+}
+
+async function tabLooksLikeCaptcha(tabId) {
+  try {
+    const tab = await chrome.tabs.get(tabId);
+    const url = (tab.url || tab.pendingUrl || '').toLowerCase();
+    return /(\/sorry|captcha|recaptcha)/.test(url);
+  } catch (e) {
+    return false;
+  }
 }
 
 function waitForTabLoad(tabId, maxWaitMs = 25000) {

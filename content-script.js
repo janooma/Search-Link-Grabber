@@ -96,18 +96,26 @@
 
   function detectCaptcha() {
     if (!document.body && !document.documentElement) return false;
-    const text = (document.body?.innerText || '').toLowerCase();
-    const html = (document.documentElement?.innerHTML || '').toLowerCase();
     const url = location.href.toLowerCase();
-    const indicators = [
-      'captcha', 'recaptcha', 'i\'m not a robot', 'unusual traffic',
-      'our systems have detected unusual traffic', 'please click', 'i am not a robot',
-      'type the text', 'verify you', 'verification', 'are you a robot', 'automated'
+
+    // Strong URL / structural indicators first.
+    const hasCaptchaElement = !!document.querySelector(
+      'form[action*="/sorry"], #captcha, #recaptcha, .g-recaptcha, iframe[src*="recaptcha"], iframe[src*="captcha"]'
+    );
+    const inCaptchaUrl = /(\/sorry|captcha|recaptcha)/.test(url);
+
+    if (hasCaptchaElement || inCaptchaUrl) return true;
+
+    // Conservative text checks for common challenge phrases.
+    const text = (document.body?.innerText || '').toLowerCase();
+    const phrases = [
+      'unusual traffic',
+      'our systems have detected unusual traffic',
+      "i'm not a robot",
+      'i am not a robot',
+      'type the text',
     ];
-    const hasText = indicators.some((i) => text.includes(i) || html.includes(i));
-    const hasForm = !!document.querySelector('form[action*="/sorry"], form[action*="captcha"], #captcha, #recaptcha, .g-recaptcha, iframe[src*="recaptcha"]');
-    const inUrl = /(\/sorry|captcha|recaptcha|verify)/.test(url);
-    return hasText || hasForm || inUrl;
+    return phrases.some((p) => text.includes(p));
   }
 
   chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
