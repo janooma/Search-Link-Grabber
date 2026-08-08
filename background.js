@@ -158,17 +158,42 @@ async function updateStatus(status) {
   await saveState();
 }
 
+function configsEqual(a, b) {
+  if (!a || !b) return false;
+  if (a.engine !== b.engine) return false;
+  if (a.baseQuery !== b.baseQuery) return false;
+  if ((a.maxPages || 0) !== (b.maxPages || 0)) return false;
+  const aCombos = a.combos || [];
+  const bCombos = b.combos || [];
+  if (aCombos.length !== bCombos.length) return false;
+  for (let i = 0; i < aCombos.length; i++) {
+    if (aCombos[i] !== bCombos[i]) return false;
+  }
+  return true;
+}
+
 async function computeTotalEstimated() {
   // Base query run + one run per combo term.
-  const comboRuns = Math.max(1, memoryState.combos.length + 1);
-  memoryState.totalEstimated = comboRuns * memoryState.maxPages;
+  const comboRuns = Math.max(1, (memoryState.combos || []).length + 1);
+  memoryState.totalEstimated = comboRuns * (memoryState.maxPages || 1);
 }
 
 async function start(payload) {
   if (memoryState && memoryState.running) return false;
 
-  // Start always begins a fresh run for the supplied config but **retains**
-  // previously captured results. Use Clear explicitly if you want to wipe data.
+  // If configuration hasn't changed, Start continues from where it was stopped
+  // (same as Resume). If Clear was used or config changed, it starts fresh.
+  if (memoryState && configsEqual(memoryState, payload)) {
+    memoryState.running = true;
+    memoryState.paused = false;
+    memoryState.status = 'Resuming from last stop...';
+    memoryState.completedAt = null;
+    await saveState();
+    runLoop();
+    return true;
+  }
+
+  // Fresh start for the supplied config but **retains** previously captured results.
   memoryState = {
     ...DEFAULT_STATE,
     ...payload,
@@ -205,7 +230,8 @@ async function resume() {
   if (memoryState.running) return false;
   memoryState.running = true;
   memoryState.paused = false;
-  memoryState.status = 'Resuming...';
+  memoryState.status = 'Resuming from last stop...';
+  memoryState.completedAt = null;
   await saveState();
   runLoop();
   return true;
